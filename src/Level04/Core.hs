@@ -22,6 +22,7 @@ import qualified Data.ByteString.Lazy.Char8         as LBS
 
 import           Data.Either                        (Either (Left, Right),
                                                      either)
+import           Data.Bifunctor                     (first, second)
 
 import           Data.Semigroup                     ((<>))
 import           Data.Text                          (Text)
@@ -36,10 +37,10 @@ import qualified Waargonaut.Encode                  as E
 import           Level04.Conf                       (Conf, firstAppConfig)
 import qualified Level04.DB                         as DB
 import           Level04.Types                      (ContentType (JSON, PlainText),
-                                                     Error (EmptyCommentText, EmptyTopic, UnknownRoute),
+                                                     Error (EmptyCommentText, EmptyTopic, UnknownRoute, DBError),
                                                      RqType (AddRq, ListRq, ViewRq),
                                                      mkCommentText, mkTopic,
-                                                     renderContentType)
+                                                     renderContentType, encodeComment, encodeTopic)
 
 -- Our start-up is becoming more complicated and could fail in new and
 -- interesting ways. But we also want to be able to capture these errors in a
@@ -49,9 +50,11 @@ data StartUpError
   deriving Show
 
 runApp :: IO ()
-runApp = error "runApp needs re-implementing"
+runApp = do
+  resp <- prepareAppReqs 
+  either (\_ -> pure ()) (\db -> run 3000 $ app db) resp
 
--- We need to complete the following steps to prepare our app requirements:
+  -- We need to complete the following steps to prepare our app requirements:
 --
 -- 1) Load the configuration.
 -- 2) Attempt to initialise the database.
@@ -60,8 +63,7 @@ runApp = error "runApp needs re-implementing"
 --
 prepareAppReqs
   :: IO ( Either StartUpError DB.FirstAppDB )
-prepareAppReqs =
-  error "prepareAppReqs not implemented"
+prepareAppReqs = first DBInitErr <$> DB.initDB "potato"
 
 -- | Some helper functions to make our lives a little more DRY.
 mkResponse
@@ -138,12 +140,16 @@ handleRequest
   :: DB.FirstAppDB
   -> RqType
   -> IO (Either Error Response)
-handleRequest _db (AddRq _ _) =
-  (resp200 PlainText "Success" <$) <$> error "AddRq handler not implemented"
-handleRequest _db (ViewRq _)  =
-  error "ViewRq handler not implemented"
+handleRequest _db (AddRq topic commentText) =
+  (resp200 PlainText "Success" <$) <$> DB.addCommentToTopic _db topic commentText
+handleRequest _db (ViewRq topic)  = 
+  (\a -> second (\comments 
+    -> resp200 JSON $ E.simplePureEncodeByteString (E.list encodeComment) comments) a) 
+    <$>  DB.getComments _db topic
 handleRequest _db ListRq      =
-  error "ListRq handler not implemented"
+  (\a -> second (\comments 
+    -> resp200 JSON $ E.simplePureEncodeByteString (E.list encodeTopic) comments) a)
+    <$> DB.getTopics _db
 
 mkRequest
   :: Request
@@ -187,3 +193,5 @@ mkErrorResponse EmptyCommentText =
   resp400 PlainText "Empty Comment"
 mkErrorResponse EmptyTopic =
   resp400 PlainText "Empty Topic"
+mkErrorResponse DBError =
+  resp400 PlainText "Database Error"

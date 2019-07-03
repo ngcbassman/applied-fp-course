@@ -18,7 +18,7 @@ import           Network.Wai                        (Application, Request,
                                                      strictRequestBody)
 import           Network.Wai.Handler.Warp           (run)
 
-import           Data.Bifunctor                     (first)
+import           Data.Bifunctor                     (first, bimap)
 import           Data.Either                        (Either (Left, Right),
                                                      either)
 
@@ -39,12 +39,13 @@ import qualified Level07.Conf                       as Conf
 import qualified Level07.DB                         as DB
 
 import qualified Level07.Responses                  as Res
-import           Level07.Types                      (Conf, ConfigError,
+import           Level07.Types                      (Conf (..), ConfigError,
                                                      ContentType (PlainText),
                                                      Error (..), RqType (..),
                                                      confPortToWai,
                                                      encodeComment, encodeTopic,
-                                                     mkCommentText, mkTopic)
+                                                     mkCommentText, mkTopic,
+                                                     DBFilePath (..))
 
 import           Level07.AppM                       (App, Env (..), liftEither,
                                                      runApp)
@@ -60,6 +61,9 @@ data StartUpError
   = DBInitErr SQLiteResponse
   | ConfErr ConfigError
   deriving Show
+
+logConsole :: Text -> App ()
+logConsole = liftIO . (hPutStrLn stderr)
 
 runApplication :: IO ()
 runApplication = do
@@ -83,7 +87,13 @@ runApplication = do
 -- 'mtl' on Hackage: https://hackage.haskell.org/package/mtl
 --
 prepareAppReqs :: ExceptT StartUpError IO Env
-prepareAppReqs = error "prepareAppReqs not reimplemented with ExceptT"
+prepareAppReqs = 
+  ExceptT $ Conf.parseOptions "files/appconfig.json"
+    >>= (\eConf -> case eConf of 
+      Left e -> pure $ Left (ConfErr e)
+      Right conf -> DB.initDB (dbFilePath conf) 
+        >>= pure . bimap DBInitErr (Env logConsole conf))
+
   -- You may copy your previous implementation of this function and try refactoring it. On the
   -- condition you have to explain to the person next to you what you've done and why it works.
 
@@ -94,8 +104,11 @@ prepareAppReqs = error "prepareAppReqs not reimplemented with ExceptT"
 app
   :: Env
   -> Application
-app =
-  error "Copy your completed 'app' from the previous level and refactor it here"
+app env rq cb =
+  runApp (mkRequest rq >>= handleRequest) env >>= cb . handleRespErr
+  where
+    handleRespErr :: Either Error Response -> Response
+    handleRespErr = either mkErrorResponse id
 
 handleRequest
   :: RqType

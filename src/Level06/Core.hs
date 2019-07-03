@@ -37,16 +37,17 @@ import           Waargonaut.Encode                  (Encoder')
 import qualified Waargonaut.Encode                  as E
 
 import           Level06.AppM                       (App, AppM (..),
-                                                     liftEither, runApp)
+                                                     liftEither, runApp, bimap)
 import qualified Level06.Conf                       as Conf
 import qualified Level06.DB                         as DB
-import           Level06.Types                      (Conf, ConfigError,
+import           Level06.Types                      (Conf (..), ConfigError,
                                                      ContentType (..),
                                                      Error (..),
                                                      RqType (AddRq, ListRq, ViewRq),
                                                      encodeComment, encodeTopic,
                                                      mkCommentText, mkTopic,
-                                                     renderContentType)
+                                                     renderContentType, confPortToWai,
+                                                     getDBFilePath)
 
 -- | Our start-up is becoming more complicated and could fail in new and
 -- interesting ways. But we also want to be able to capture these errors in a
@@ -57,7 +58,26 @@ data StartUpError
   deriving Show
 
 runApplication :: IO ()
-runApplication = error "copy your previous 'runApp' implementation and refactor as needed"
+runApplication = 
+  runAppM prepareAppReqs 
+    >>= (\ea -> case ea of 
+      Left e -> undefined
+      Right (conf, db) -> Ex.finally (run (confPortToWai conf) $ app conf db) (DB.closeDB db))
+      
+  -- do
+  -- Load our configuration
+  -- cfgE <- prepareAppReqs
+  -- Loading the configuration can fail, so we have to take that into account now.
+  -- case cfgE of
+    -- Left err   ->
+      -- We can't run our app at all! Display the message and exit the application.
+      -- undefined
+    -- Right cfg ->
+      -- We have a valid config! We can now complete the various pieces needed to run our
+      -- application. This function 'finally' will execute the first 'IO a', and then, even in the
+      -- case of that value throwing an exception, execute the second 'IO b'. We do this to ensure
+      -- that our DB connection will always be closed when the application finishes, or crashes.
+      -- Ex.finally (run 3000 $ app cfg) (DB.closeDB cfg)
 
 -- | We need to complete the following steps to prepare our app requirements:
 --
@@ -72,7 +92,12 @@ runApplication = error "copy your previous 'runApp' implementation and refactor 
 -- up!
 --
 prepareAppReqs :: AppM StartUpError (Conf, DB.FirstAppDB)
-prepareAppReqs = error "copy your prepareAppReqs from the previous level."
+prepareAppReqs = 
+  bimap ConfErr id (Conf.parseOptions "files/appconfig.json")
+  >>= (\conf -> liftIO $ (DB.initDB $ (getDBFilePath $ dbFilePath conf)) 
+  >>= pure . bimap DBInitErr ((,) conf))
+    >>= liftEither
+
 
 -- | Some helper functions to make our lives a little more DRY.
 mkResponse
